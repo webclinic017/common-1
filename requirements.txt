@@ -1,0 +1,12 @@
+click
+gspread-pandas
+minio
+numpy
+pandas
+pandas-market-calendars
+python-dateutil
+quandl
+requests
+ring
+tqdm
+twilio
