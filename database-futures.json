@@ -724,7 +724,6 @@
       "ExpectedDividend": ".SPX"
     },
     "ContractSize": 50,
-    "COT": "13874A",
     "Currency": "USD",
     "Exchange": "GLOBEX",
     "ExecutionParameters": {
