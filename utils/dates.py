@@ -4,7 +4,7 @@ from datetime import timedelta
 from pandas.tseries.offsets import BMonthBegin, BMonthEnd
 
 
-from common.utils.relativedelta import relativedelta
+from .relativedelta import relativedelta
 
 
 def first_day_of_month(day):
