@@ -64,7 +64,7 @@ def run(mode, stems, leverage):
             df = pd.DataFrame(data=data)
             path = os.path.join(os.getenv('HOME'), 'Downloads', f'{stem}.csv')
             df.to_csv(path, index=False)
-    elif mode == 'market_impact':
+    elif mode == 'market-impact':
         start_date = date.today() - timedelta(days=30)
         end_date = date.today() - timedelta(days=1)
         market_impact = MarketImpact(start_date, end_date)
@@ -74,13 +74,16 @@ def run(mode, stems, leverage):
         pprint(cache)
 
 
-@ click.command()
-@ click.option('--mode', required=True)
-@ click.option('--stems', default=','.join(BUY_AND_HOLD_STEMS), required=True)
-@ click.option('--leverage', default=4.0, required=True)
+@click.command()
+@click.option('--mode', required=True)
+@click.option('--stems', default=','.join(BUY_AND_HOLD_STEMS), required=True)
+@click.option('--leverage', default=4.0, required=True)
 def main(mode, stems, leverage):
     run(mode, stems, leverage)
 
 
 if __name__ == '__main__':
+    '''
+    python -m common.strategies.buy_and_hold.run --mode market-impact --stems BO
+    '''
     main()  # pylint: disable=no-value-for-parameter

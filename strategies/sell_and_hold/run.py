@@ -65,7 +65,7 @@ def run(mode, stems, leverage):
             df = pd.DataFrame(data=data)
             path = os.path.join(os.getenv('HOME'), 'Downloads', f'{stem}.csv')
             df.to_csv(path, index=False)
-    elif mode == 'market_impact':
+    elif mode == 'market-impact':
         stems = stems.split(',') if stems else list(FUTURES.keys())
         start_date = date(2020, 8, 15)
         end_date = date(2020, 9, 15)

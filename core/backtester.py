@@ -16,7 +16,7 @@ from ..utils.gmail import send_email
 from ..utils.dates import is_weekend
 from ..utils.sms import send_sms
 from ..core.indicators import TWELVE_MONTHS
-from ..core.market_data import MarketDataFuture
+from ..core.market_data import MarketData
 
 
 class Backtester():
@@ -24,7 +24,7 @@ class Backtester():
     def __init__(self, stems, start_date, end_date, cash, leverage,
                  live, instrument_type=FUTURE_TYPE, no_check=False, plot=True, suffix=''):
         self.broker = Broker(cash, live, no_check)
-        self.market_data = MarketDataFuture()
+        self.market_data = MarketData()
         self.cash = cash
         self.data = []
         self.dates = []

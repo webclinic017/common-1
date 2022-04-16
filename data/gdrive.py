@@ -6,10 +6,10 @@ import numpy as np
 
 script_path = os.path.abspath(os.path.dirname(__file__))
 conf_dir = os.path.join(script_path, '..', 'common', 'utils')
-config = conf.get_config(
-    conf_dir=conf_dir, file_name='google_secret.json')
-
-gdrive_client = Client(config=config)
+if os.path.exists(conf_dir):
+    config = conf.get_config(
+        conf_dir=conf_dir, file_name='google_secret.json')
+    gdrive_client = Client(config=config)
 
 
 CURRENCY = 'Currency'

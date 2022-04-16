@@ -5,12 +5,100 @@ import tempfile
 
 import numpy as np
 import pandas as pd
+import requests
 import ring
 
-from ..constants import FUTURES, LIBOR_BEFORE_2001, MAXIMUM_REQUEST_SIZE, START_DATE
-from ..data.eikon import get_data, get_news_headlines, get_news_story, get_timeseries
+from ..constants import FUTURES, LIBOR_BEFORE_2001, START_DATE
 from ..data.minio_client import exists_object, fget_object, put_object
 from ..utils.files import ensure_dir
+
+
+class Client():
+    def __init__(self):
+        self.headers={
+            'Authorization': os.getenv('DATA_SECRET_KEY')
+        }
+    
+    def get_daily_factor(self, path, ticker, start_date, end_date):
+        response = requests.get(
+            f'http://localhost:8000/daily/factor/{path}',
+            headers=self.headers,
+            params={
+                'ticker': ticker,
+                'start_date': start_date,
+                'end_date': end_date,
+            })
+        response_json = response.json()
+        error = response_json['error']
+        if error is not None:
+            print(error)
+        data = response_json['data']
+        if data is None:
+            return
+        dfm = pd.DataFrame.from_dict(data)
+        dfm = dfm.set_index(['Date', 'Stem'])
+        return dfm
+    
+    def get_daily_ohlcv(self, ric, start_date, end_date):
+        response = requests.get(
+            f'http://localhost:8000/daily/ohlcv',
+            headers=self.headers,
+            params={
+                'ric': ric,
+                'start_date': start_date,
+                'end_date': end_date,
+            })
+        response_json = response.json()
+        print(response_json)
+        error = response_json['error']
+        if error is not None:
+            print(error)
+        data = response_json['data']
+        if data is None:
+            return
+        dfm = pd.DataFrame.from_dict(data)
+        dfm = dfm.set_index(['Date', 'RIC'])
+        return dfm
+    
+    def get_daily_risk_free_rate(self, ric, start_date, end_date):
+        response = requests.get(
+            f'http://localhost:8000/daily/risk-free-rate',
+            headers=self.headers,
+            params={
+                'ric': ric,
+                'start_date': start_date,
+                'end_date': end_date,
+            })
+        response_json = response.json()
+        error = response_json['error']
+        if error is not None:
+            print(error)
+        data = response_json['data']
+        if data is None:
+            return
+        dfm = pd.DataFrame.from_dict(data)
+        dfm = dfm.set_index(['Date', 'RIC'])
+        return dfm
+    
+    def get_health_ric(self, ric):
+        response = requests.get(
+            f'http://localhost:8000/health/ric',
+            headers=self.headers,
+            params={
+                'ric': ric,
+            })
+        data = response.json().get('data', False)
+        return data
+    
+    def get_tickers(self):
+        response = requests.get(
+            f'http://localhost:8000/tickers',
+            headers=self.headers)
+        data = response.json().get('data', [])
+        return data
+
+
+client = Client()
 
 
 @ring.lru()
@@ -82,11 +170,7 @@ def json_data_to_df(data, version='v1'):
 
 @ring.lru()
 def ric_exists(ric):
-    r = get_data(instruments=[ric], fields=['TR.RIC', 'CF_NAME'])
-    try:
-        return r['data'][0]['RIC'] is not None
-    except:
-        return False
+    return client.get_health_ric(ric)
 
 
 @ring.lru()
@@ -120,84 +204,6 @@ def will_expire_soon(ric, day=date.today()):
     return day > last_trade_date - timedelta(days=10)
 
 
-def download_all_daily_ohlcv_from_eikon(ric, start_date, end_date):
-    delta = end_date - start_date
-    data = []
-    for i in range(0, delta.days + 1, MAXIMUM_REQUEST_SIZE):
-        start_date_of_slice = start_date + timedelta(days=i)
-        end_date_of_slice = start_date + \
-            timedelta(days=min(i + MAXIMUM_REQUEST_SIZE -
-                               1, delta.days))
-        r = get_timeseries(rics=ric,
-                           fields=['OPEN', 'HIGH',
-                                   'LOW', 'CLOSE', 'VOLUME'],
-                           start_date=start_date_of_slice.isoformat(),
-                           end_date=end_date_of_slice.isoformat(),
-                           interval='daily')
-        if r['data'] is not None:
-            data += r['data']
-    r = {'data': data, 'error': r['error']}
-    bucket_name = 'daily-ohlcv'
-    object_name = f'{ric}.json'
-    temp_dir = tempfile.TemporaryDirectory()
-    path = os.path.join(temp_dir.name, object_name)
-    with open(path, 'w') as f:
-        json.dump(r, f)
-    put_object(path, bucket_name)
-    temp_dir.cleanup()
-
-
-@ring.lru()
-def download_daily_ohlcv_from_eikon(ric, start_date, last_trade_date):
-    r = get_timeseries(rics=ric,
-                       fields=['OPEN', 'HIGH',
-                               'LOW', 'CLOSE', 'VOLUME'],
-                       start_date=start_date.isoformat(),
-                       end_date=last_trade_date.isoformat(),
-                       interval='daily')
-    bucket_name = 'daily-ohlcv'
-    object_name = f'{ric}.json'
-    temp_dir = tempfile.TemporaryDirectory()
-    path = os.path.join(temp_dir.name, object_name)
-    with open(path, 'w') as f:
-        json.dump(r, f)
-    put_object(path, bucket_name)
-    temp_dir.cleanup()
-    return r['data'], r['error']
-
-
-@ring.lru()
-def download_daily_news_headlines_from_eikon(ric, day):
-    r = get_news_headlines(
-        query=ric,
-        date_from=day.isoformat(),
-        date_to=(day + timedelta(days=1)).isoformat(),
-        count=50)
-    bucket_name = 'daily-news-headlines'
-    object_name = f'{day.isoformat()}/{ric}.json'
-    temp_dir = tempfile.TemporaryDirectory()
-    path = os.path.join(temp_dir.name, object_name)
-    with open(ensure_dir(path), 'w') as f:
-        json.dump(r, f)
-    put_object(path, bucket_name, object_name)
-    temp_dir.cleanup()
-    return r['data'], r['error']
-
-
-@ring.lru()
-def download_daily_news_story_from_eikon(story_id):
-    r = get_news_story(story_id=story_id)
-    bucket_name = 'daily-news-story'
-    object_name = f'{story_id}.json'
-    temp_dir = tempfile.TemporaryDirectory()
-    path = os.path.join(temp_dir.name, object_name)
-    with open(ensure_dir(path), 'w') as f:
-        json.dump(r, f)
-    put_object(path, bucket_name, object_name)
-    temp_dir.cleanup()
-    return r['data'], r['error']
-
-
 @ring.lru()
 def download_from_s3(bucket_name, object_name, version='v1'):
     if not exists_object(bucket_name, object_name):
@@ -210,24 +216,6 @@ def download_from_s3(bucket_name, object_name, version='v1'):
         return r['data'], r['error']
     elif version == 'v2':
         return r, {'message': f'No OHLCV for {object_name}'} if len(r) == 0 else None
-
-
-def get_stock_news_headlines_for_day(day, ric=None):
-    bucket_name = 'daily-news-headlines'
-    object_name = f'{day.isoformat()}/{ric}.json'
-    data, err = download_from_s3(bucket_name, object_name)
-    if data is None:
-        data, err = download_daily_news_headlines_from_eikon(ric, day)
-    return json_data_to_df(data, version='v3'), None
-
-
-def get_stock_news_story_for_day(story_id):
-    bucket_name = 'daily-news-story'
-    object_name = f'{story_id}.json'
-    data, err = download_from_s3(bucket_name, object_name)
-    if data is None:
-        data, err = download_daily_news_story_from_eikon(story_id)
-    return data, err
 
 
 def get_coin_ohlcv_for_day(day, ric=None):
@@ -264,74 +252,23 @@ def get_future_ohlcv_for_day(day, contract_rank=0, ric=None, stem=None):
     if last_trade_date is None or day > last_trade_date:
         message = f'No OHLCV for {ric} on {day.isoformat()}'
         return None, {'message': message}
-    bucket_name = 'daily-ohlcv'
-    object_name = f'{ric}.json'
-    data, err = download_from_s3(bucket_name, object_name)
-    if err:
-        if 'Invalid RIC' in err['message']:
-            return None, err
-    df = json_data_to_df(data)
-    if df is not None:
-        index = df.index == day.isoformat()
+    dfm = client.get_daily_ohlcv(ric, start_date, last_trade_date)
+    if dfm is not None:
+        index = dfm.index == day.isoformat()
         current_day_exists = np.any(index)
-        days_after_exist = np.any(df.index > day.isoformat())
+        days_after_exist = np.any(dfm.index > day.isoformat())
         if current_day_exists:
-            return df.loc[index, :], None
-        elif days_after_exist:
-            message = f'No OHLCV for {ric} on {day.isoformat()}'
-            return None, {'message': message}
-    data, _ = download_daily_ohlcv_from_eikon(ric, start_date, last_trade_date)
-    df = json_data_to_df(data)
-    index = df.index == day.isoformat()
-    if not np.any(index):
-        message = f'No OHLCV for {ric} on {day.isoformat()}'
-        return None, {'message': message}
-    return df.loc[index, :], None
-
-
-def get_stock_ohlcv_for_day(day, ric=None):
-    bucket_name = 'daily-ohlcv'
-    object_name = f'{ric}.json'
-    data, err = download_from_s3(bucket_name, object_name)
-    if err:
-        if 'Invalid RIC' in err['message']:
-            return None, err
-    df = json_data_to_df(data)
-    if df is not None:
-        index = df.index == day.isoformat()
-        current_day_exists = np.any(index)
-        days_after_exist = np.any(df.index > day.isoformat())
-        if current_day_exists:
-            return df.loc[index, :], None
-        elif days_after_exist:
-            message = f'No OHLCV for {ric} on {day.isoformat()}'
-            return None, {'message': message}
-    data, _ = download_daily_ohlcv_from_eikon(ric, START_DATE, date.today())
-    df = json_data_to_df(data)
-    index = df.index == day.isoformat()
-    if not np.any(index):
-        message = f'No OHLCV for {ric} on {day.isoformat()}'
-        return None, {'message': message}
-    return df.loc[index, :], None
-
+            return dfm.loc[index, :], None
+    message = f'No OHLCV for {ric} on {day.isoformat()}'
+    return None, {'message': message}
+    
 
 @ring.lru()
 def download_daily_libor_from_eikon(ric):
     start_date = START_DATE
     end_date = date.today()
-    r = get_data(instruments=ric,
-                 fields=[
-                     'TR.FIXINGVALUE.Date', 'TR.FIXINGVALUE'],
-                 parameters={'SDate': start_date.isoformat(), 'EDate': end_date.isoformat()})
-    bucket_name = 'daily-libor'
-    object_name = f'{ric}.json'
-    temp_dir = tempfile.TemporaryDirectory()
-    path = os.path.join(temp_dir.name, object_name)
-    with open(path, 'w') as f:
-        json.dump(r, f)
-    put_object(path, bucket_name)
-    temp_dir.cleanup()
-    return r['data'], r['error']
+    dfm = client.get_daily_risk_free_rate(ric, start_date, end_date)
+    return dfm, None
 
 
 @ring.lru()
@@ -339,15 +276,11 @@ def get_daily_libor_for_day(day):
     if day < date(2001, 1, 2):
         return LIBOR_BEFORE_2001
     ric = 'USDONFSR=X'
-    bucket_name = 'daily-libor'
-    object_name = f'{ric}.json'
-    data, _ = download_from_s3(bucket_name, object_name)
-    df = json_data_to_df(data, version='v2')
-    if df is None or np.all(df.index < day.isoformat()):
-        df, _ = download_daily_libor_from_eikon(ric)
-    index = pd.to_datetime(df.index, format='%Y-%m-%d').get_loc(
+    df, _ = download_daily_libor_from_eikon(ric)
+    index_date = df.index.map(lambda x: x[0])
+    index = pd.to_datetime(index_date, format='%Y-%m-%d').get_loc(
         datetime.combine(day, datetime.min.time()), method='nearest')
-    fixing_value = df.at[df.index[index], 'Fixing Value']
+    fixing_value = df.at[df.index[index], 'FixingValue']
     return fixing_value
 
 
@@ -366,38 +299,19 @@ def get_ric_and_stem(day, contract_rank=0, ric=None, stem=None):
 
 
 @ring.lru()
-def download_daily_forex_from_eikon(ric, start_date, end_date, object_name):
-    r = get_timeseries(rics=ric,
-                       fields=['OPEN', 'HIGH',
-                               'LOW', 'CLOSE'],
-                       start_date=start_date.isoformat(),
-                       end_date=end_date.isoformat(),
-                       interval='daily')
-    bucket_name = 'daily-forex'
-    temp_dir = tempfile.TemporaryDirectory()
-    path = os.path.join(temp_dir.name, object_name)
-    with open(path, 'w') as f:
-        json.dump(r, f)
-    put_object(path, bucket_name)
-    temp_dir.cleanup()
-    return r['data'], r['error']
+def download_daily_forex_from_eikon(ric, start_date, end_date):
+    dfm = client.get_daily_ohlcv(ric, start_date, end_date)
+    return dfm, None
 
 
 @ring.lru()
 def get_daily_forex_for_day(day, ric):
     start_date = date(day.year, 1, 1)
     end_date = date(day.year, 12, 31)
-    bucket_name = 'daily-forex'
-    object_name = f'{ric}.{day.year}.json'
-    data, _ = download_from_s3(bucket_name, object_name)
-    df = json_data_to_df(data)
-    if df is None or np.all(df.index < day.isoformat()):
-        data, _ = download_daily_forex_from_eikon(
-            ric, start_date, end_date, object_name)
-        df = json_data_to_df(data)
-    index = pd.to_datetime(df.index, format='%Y-%m-%d').get_loc(
+    dfm = client.get_daily_ohlcv(ric, start_date, end_date)
+    index = pd.to_datetime(dfm.index, format='%Y-%m-%d').get_loc(
         datetime.combine(day, datetime.min.time()), method='nearest')
-    return df.iloc[index, :]
+    return dfm.iloc[index, :]
 
 
 @ring.lru()
@@ -464,7 +378,5 @@ def get_last_trade_date(ric):
 
 
 if __name__ == '__main__':
-    # print(get_daily_libor_for_day(date(2020, 12, 18)))
-    # print(get_daily_forex_for_day(day=date(2020, 12, 18), ric='USDEUR=R'))
-    print(get_stock_news_headlines_for_day(
-        day=date(2021, 5, 10), ric='BNPP.PA'))
+    print(get_daily_libor_for_day(date(2020, 12, 18)))
+    #print(get_daily_forex_for_day(day=date(2020, 12, 18), ric='USDEUR=R'))
